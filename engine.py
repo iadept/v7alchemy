@@ -225,7 +225,7 @@ class Query:
                     record[field.human_name] = line[i].encode("cp866").decode("cp1251")
                 else:
                     record[field.human_name] = line[i]
-                records.append(record)
+            records.append(record)
         return records
 
 
