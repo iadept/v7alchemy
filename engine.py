@@ -4,7 +4,6 @@ import copy
 import pyodbc
 from enum import Enum
 
-
 class Field:
     """
     Схема ячейки
@@ -62,6 +61,11 @@ class Field:
 
     def __ge__(self, other):
         return WhereType.GE, self, other
+
+    def in_(self, values):
+        if type(values[0]) == str:
+            return WhereType.IN, self, "(%s)" % (','.join(map(lambda x: "'%s'" % x, values)))
+        return WhereType.IN, self, "(%s)" % (','.join(values))
 
     def alias(self, title):
         """
@@ -124,7 +128,7 @@ class WhereType(Enum):
     LE = "<="
     GT = ">"
     GE = ">="
-
+    IN = "IN"
 
 class Where:
 
@@ -148,7 +152,7 @@ class Where:
         return " %s %s ?" % (self.left.sql_name, self.where_type.value)
 
 
-class Query:
+class Select:
 
     def __init__(self, engine: Engine, table: Table, *cells):
         """
@@ -204,7 +208,7 @@ class Query:
             table = "%s as %s" % (join_field.parent.table, join_field.parent.name)
         return "(%s LEFT OUTER JOIN %s ON %s = %s) " % (first, table, extend.sql_name, join_field.sql_name)
 
-    def all(self):
+    def __query(self):
         result = "SELECT %s FROM " % (','.join(map(lambda x: x.sql_name, self.__select_fields)))
 
         result = result + self.__extends_str(self.__extends, self.__main_table.table)
@@ -213,11 +217,22 @@ class Query:
         filter_fields = []
         filter_args = []
         for where in self.__conditions:
-            filter_fields.append(str(where))
-            filter_args.append(where.value)
+            if where.where_type == WhereType.IN:
+                filter_fields.append(str(where)[:-1] + where.value)
+            else:
+                filter_fields.append(str(where))
+                filter_args.append(where.value)
         result = result + " AND ".join(filter_fields)
+        return result, filter_args
+
+    def all(self):
+        """
+        Возвращает все записи списком
+        :return:
+        """
+        query, args = self.__query()
         records = []
-        for line in self.__engine._run(result, filter_args):
+        for line in self.__engine._run(query, args):
             record = {}
             for i, field in enumerate(self.__select_fields):
                 value = line[i]
@@ -228,6 +243,29 @@ class Query:
             records.append(record)
         return records
 
+    def dict(self, field_id: Field):
+        """
+        Возвращает словарь с заданным ключом
+        :param field_id: поле-ключ должен быть в выборке
+        :return:
+        """
+        query, args = self.__query()
+        records = {}
+        for line in self.__engine._run(query, args):
+            record = {}
+            record_id = None
+            for i, field in enumerate(self.__select_fields):
+                value = line[i]
+                if type(value) == str:
+                    record[field.human_name] = line[i].encode("cp866").decode("cp1251")
+                else:
+                    record[field.human_name] = line[i]
+                if field.name == field_id.name:
+                    record_id = line[i]
+
+            records[record_id] = record
+        return records
+
 
 class Engine:
 
@@ -236,7 +274,7 @@ class Engine:
         self.reader = pyodbc.connect(connect, autocommit=True)
 
     def select(self, table: Table, *cells):
-        return Query(self, table, *cells)
+        return Select(self, table, *cells)
 
     def _run(self, query_str: str, *args):
         print(query_str)

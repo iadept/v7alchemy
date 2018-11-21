@@ -1,4 +1,4 @@
-from  engine import Field, Table
+from engine import Field, Table
 
 
 class PeriodField(Field):
@@ -21,12 +21,23 @@ class TableJournal(Table):
 
 class TableSC(Table):
     prefix = "SC"
-    file: str = None
 
     id = Field("ID")
     code = Field("CODE")
     description = Field("DESCR")
 
+
+class TableDH(Table):
+    prefix = "DH"
+
+    doc = Field("IDDOC")
+
+
+class TableDT(Table):
+    prefix = "DT"
+
+    doc = Field("IDDOC")
+    line = Field("LINENO")
 
 class TableRG(Table):
     prefix = "RG"
