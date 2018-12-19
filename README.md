@@ -53,15 +53,15 @@ query = engine.select(Clients,
                       Clients.code.alias("code"),
                       Clients.description.alias("title"),
                       Manager.description.alias("manager"))
-query = query.extend(Clients.manager)
+query.extend(Clients.manager)
 query.all()  # -> [{"code": "0001", "title": "ООО Вектор", manager: "Иванов"}, ...]
 
 # Остатки товара на Основном складе из регистра
 query = engine.select(Lefts,
                       Items.code.alias("code"),
                       Lefts.count.alias("count"))
-query = query.extend(Lefts.stock).extend(Lefts.item)
-query = query.where(Lefts.period == datetime.date.today()).where(Stocks.description == "Основной")
+query.extend(Lefts.stock).extend(Lefts.item)
+query.where(Lefts.period == datetime.date.today()).where(Stocks.description == "Основной")
 query.all()  # -> [{"code": "К001", "count": 90}, ...]
 
 ```

@@ -1,5 +1,4 @@
-from engine import Field, Table
-
+from v7alchemy.engine import Field, Table
 
 class PeriodField(Field):
 
@@ -16,6 +15,7 @@ class TableJournal(Table):
     docref = Field("IDDOCREF")
     date = Field("DATE")
     number = Field("DOCNO")
+    closed = Field("CLOSED")
     ismark = Field("ISMARK")
 
 
@@ -30,7 +30,7 @@ class TableSC(Table):
 class TableDH(Table):
     prefix = "DH"
 
-    doc = Field("IDDOC")
+    doc = Field("IDDOC", join=TableJournal.doc)
 
 
 class TableDT(Table):
@@ -52,5 +52,3 @@ class TableRA(Table):
 
     doc = Field("IDDOC", join=TableJournal.doc)
     lineno = Field("LINENO")
-
-

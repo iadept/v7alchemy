@@ -4,6 +4,9 @@ import copy
 import pyodbc
 from enum import Enum
 
+class QueryException(Exception):
+    pass
+
 class Field:
     """
     Схема ячейки
@@ -61,6 +64,9 @@ class Field:
 
     def __ge__(self, other):
         return WhereType.GE, self, other
+
+    def __ne__(self, other):
+        return WhereType.NEQ, self, other
 
     def in_(self, values):
         if type(values[0]) == str:
@@ -124,11 +130,15 @@ class Table(metaclass=MetaTable):
 
 class WhereType(Enum):
     EQUAL = "="
+    NEQ = "<>"
     LT = "<"
     LE = "<="
     GT = ">"
     GE = ">="
     IN = "IN"
+    NULL_IS = "IS NULL"
+    NULL_NOT = "IS NOT NULL"
+
 
 class Where:
 
@@ -148,8 +158,46 @@ class Where:
             return self.right.sql_name
         return self.right
 
+    @property
+    def sql(self):
+        if self.right is None:
+            if self.where_type == WhereType.EQUAL:
+                return "%s IS NULL" % self.left.sql_name, None
+            if self.where_type == WhereType.NEQ:
+                return "%s IS NOT NULL" % self.left.sql_name, None
+            else:
+                raise AttributeError
+        if self.where_type == WhereType.IN:
+            return "%s IN ?" % self.left.sql_name, self.right
+
+        return " %s %s ?" % (self.left.sql_name, self.where_type.value), self.right
+
+
+class JoinType(Enum):
+    LEFT_OUTER = "LEFT OUTER"
+    RIGHT_OUTER = "RIGHT OUTER"
+    INNER = "INNER"
+
+
+class Join:
+
+    def __init__(self, join_type: JoinType, join_field: Field, field: Field):
+        self.join_type: JoinType = join_type
+        self.join_field = join_field
+        self.field = field
+
     def __str__(self):
-        return " %s %s ?" % (self.left.sql_name, self.where_type.value)
+
+        if self.join_field.parent.name:
+            table = "%s AS %s" % (self.join_field.parent.table, self.join_field.parent.name)
+            field = "%s.%s" % (self.join_field.parent.name, self.join_field.cell)
+        else:
+            table = self.join_field.parent.table
+            field = "%s.%s" % (self.join_field.parent.table, self.join_field.cell)
+
+        return "%s JOIN %s ON %s = %s.%s" % (
+            self.join_type.value, table, field, self.field.parent.table, self.field.cell
+        )
 
 
 class Select:
@@ -165,6 +213,7 @@ class Select:
         self.__main_table = table
         self.__select_fields: [Field] = []
         self.__extends = []
+        self.__joins = []
         self.__conditions: [Where] = []
 
         for cell in cells:
@@ -174,9 +223,9 @@ class Select:
                         self.__add_cell(cell.__dict__[field_name])
             except Exception as e:
                 pass
-                #print(1, cell,  e)
             try:
                 if issubclass(cell.__class__, Field):
+
                     self.__select_fields.append(cell)
             except Exception as e:
                 pass
@@ -186,7 +235,15 @@ class Select:
         Делает JOIN к запросу для выбранной ячейки
         :param field: Ячейка
         """
-        self.__extends.append(field)
+        self.__joins.append(Join(JoinType.LEFT_OUTER, field.join, field))
+        return self
+
+    def inner(self, field1, field2):
+        self.__joins.append(Join(JoinType.INNER, field1, field2))
+        return self
+
+    def right_outer(self, field1, field2):
+        self.__joins.append(Join(JoinType.RIGHT_OUTER, field1, field2))
         return self
 
     def where(self, expression):
@@ -208,30 +265,38 @@ class Select:
             table = "%s as %s" % (join_field.parent.table, join_field.parent.name)
         return "(%s LEFT OUTER JOIN %s ON %s = %s) " % (first, table, extend.sql_name, join_field.sql_name)
 
+    def __join_str(self, extends, table_name=None):
+        if len(extends) == 0:
+            return table_name
+        if len(extends) == 1:
+            extend = extends[0]
+            first = table_name
+        elif len(extends) > 1:
+            extend = extends[-1]
+            first = self.__join_str(extends[0:-1], table_name)
+        return "(%s %s) " % (first, extend)
+
     def __query(self):
+        print(self.__select_fields)
         result = "SELECT %s FROM " % (','.join(map(lambda x: x.sql_name, self.__select_fields)))
 
-        result = result + self.__extends_str(self.__extends, self.__main_table.table)
+        result = result + self.__join_str(self.__joins, self.__main_table.table)
         if len(self.__conditions) > 0:
             result = result + " WHERE "
         filter_fields = []
         filter_args = []
         for where in self.__conditions:
-            if where.where_type == WhereType.IN:
-                filter_fields.append(str(where)[:-1] + where.value)
-            else:
-                filter_fields.append(str(where))
-                filter_args.append(where.value)
+            where_str, where_arg = where.sql
+            filter_fields.append(where_str)
+            if where_arg:
+                filter_args.append(where_arg)
         result = result + " AND ".join(filter_fields)
         return result, filter_args
 
     def all(self):
-        """
-        Возвращает все записи списком
-        :return:
-        """
         query, args = self.__query()
         records = []
+        #print(query, args)
         for line in self.__engine._run(query, args):
             record = {}
             for i, field in enumerate(self.__select_fields):
@@ -244,11 +309,6 @@ class Select:
         return records
 
     def dict(self, field_id: Field):
-        """
-        Возвращает словарь с заданным ключом
-        :param field_id: поле-ключ должен быть в выборке
-        :return:
-        """
         query, args = self.__query()
         records = {}
         for line in self.__engine._run(query, args):
@@ -277,8 +337,9 @@ class Engine:
         return Select(self, table, *cells)
 
     def _run(self, query_str: str, *args):
-        print(query_str)
+        #print(query_str)
         cursor = self.reader.cursor()
+        print(query_str)
         cursor.execute(query_str, *args)
         for line in cursor.fetchall():
             yield line

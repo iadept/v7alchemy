@@ -1,6 +1,6 @@
 import datetime
 
-from engine import Engine, Field
+from v7alchemy.engine import Engine, Field
 from tables import TableSC, TableRG, TableRA, TableJournal
 
 
@@ -81,6 +81,7 @@ def main(engine):
     query = query.extend(Lefts.stock).extend(Lefts.item)
     query = query.where(Lefts.period == datetime.date.today()).where(Stocks.description == "Основной")
     query.all()  # -> [{"code": "К001", "count": 90}, ...]
+
 
 if __name__ == '__main__':
     engine = Engine("Путь к базе")
