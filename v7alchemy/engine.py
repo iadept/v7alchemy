@@ -18,7 +18,7 @@ class Field:
         :param join: Имя таблицы для привзяки
         """
         self.cell = cell
-        self.join: Field = join
+        self.join = join
 
         self.name: str = None
         self.parent: Table = None
@@ -118,6 +118,7 @@ class MetaTable(type):
                 value = dict[field]
                 if not callable(value) and issubclass(value.__class__, (Field,)):
                     value.name = field
+                    print(cls)
                     value.parent = cls
 
 
@@ -183,7 +184,11 @@ class Join:
 
     def __init__(self, join_type: JoinType, join_field: Field, field: Field):
         self.join_type: JoinType = join_type
-        self.join_field = join_field
+        if type(join_field) == str:
+            # TODO
+            pass
+        else:
+            self.join_field = join_field
         self.field = field
 
     def __str__(self):
@@ -277,7 +282,6 @@ class Select:
         return "(%s %s) " % (first, extend)
 
     def __query(self):
-        print(self.__select_fields)
         result = "SELECT %s FROM " % (','.join(map(lambda x: x.sql_name, self.__select_fields)))
 
         result = result + self.__join_str(self.__joins, self.__main_table.table)
@@ -308,6 +312,20 @@ class Select:
             records.append(record)
         return records
 
+    def one(self):
+        query, args = self.__query()
+        records = []
+        line = next(self.__engine._run(query, args))
+        record = {}
+        for i, field in enumerate(self.__select_fields):
+            value = line[i]
+            if type(value) == str:
+                record[field.human_name] = line[i].encode("cp866").decode("cp1251")
+            else:
+                record[field.human_name] = line[i]
+        records.append(record)
+        return record
+
     def dict(self, field_id: Field):
         query, args = self.__query()
         records = {}
@@ -337,10 +355,18 @@ class Engine:
         return Select(self, table, *cells)
 
     def _run(self, query_str: str, *args):
-        #print(query_str)
-        cursor = self.reader.cursor()
-        print(query_str)
-        cursor.execute(query_str, *args)
-        for line in cursor.fetchall():
-            yield line
-        cursor.close()
+        try:
+            cursor = self.reader.cursor()
+            print(query_str)
+
+
+            cursor.execute(query_str, *args)
+            for line in cursor.fetchall():
+                yield line
+        except pyodbc.Error:
+            print("Ошибка в запросе!")
+            print("Запрос:", query_str)
+            print("Аргументы:", args)
+
+        finally:
+            cursor.close()

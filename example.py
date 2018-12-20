@@ -1,7 +1,7 @@
 import datetime
 
 from v7alchemy.engine import Engine, Field
-from tables import TableSC, TableRG, TableRA, TableJournal
+from v7alchemy.tables import TableSC, TableRG, TableRA, TableJournal
 
 
 class Stocks(TableSC):

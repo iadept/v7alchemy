@@ -1,9 +1,23 @@
 from v7alchemy.engine import Field, Table
 
+
 class PeriodField(Field):
 
     def __init__(self):
         super().__init__("period")
+
+
+class TableBlob(Table):
+    """
+    Хранит длинные строки(неорганиченной длины)
+    """
+
+    prefix: str = "1SBLOB"
+
+    field_id = Field("FIELDID")
+    obj_id = Field("OBJID")
+    block_no = Field("BLOCKNO")
+    block = Field("BLOCK")
 
 
 class TableJournal(Table):
