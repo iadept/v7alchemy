@@ -12,12 +12,15 @@ class TableBlob(Table):
     Хранит длинные строки(неорганиченной длины)
     """
 
-    prefix: str = "1SBLOB"
+    prefix: str = "BLOB"
+    name: str = "Blob"
 
     field_id = Field("FIELDID")
     obj_id = Field("OBJID")
     block_no = Field("BLOCKNO")
     block = Field("BLOCK")
+
+    index_main = Field("fieldid+objid+STR(blockno,4)")
 
 
 class TableJournal(Table):

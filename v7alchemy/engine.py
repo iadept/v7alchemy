@@ -1,11 +1,26 @@
 from __future__ import annotations
 
 import copy
+from datetime import date
+
 import pyodbc
+import win32com.client
 from enum import Enum
+
 
 class QueryException(Exception):
     pass
+
+def or_(*conditions):
+    return WhereOR(*conditions)
+
+class Record:
+
+    def __init__(self, values):
+        self.values = values
+
+    def __getitem__(self, key):
+        return self.values[key]
 
 class Field:
     """
@@ -75,7 +90,7 @@ class Field:
 
     def alias(self, title):
         """
-        Задает человеческое имя ячейки
+        Задает человеческое имя ячейки в результатах выборки
         :param title: новое имя
         :return:
         """
@@ -84,11 +99,6 @@ class Field:
         return field
 
     def right(self, position):
-        """
-        Задает человеческое имя ячейки
-        :param title: новое имя
-        :return:
-        """
         field = copy.deepcopy(self)
         field.__func = "RIGHT(%s, " + str(position) + ")"
         return field
@@ -118,7 +128,6 @@ class MetaTable(type):
                 value = dict[field]
                 if not callable(value) and issubclass(value.__class__, (Field,)):
                     value.name = field
-                    print(cls)
                     value.parent = cls
 
 
@@ -130,6 +139,7 @@ class Table(metaclass=MetaTable):
 
 
 class WhereType(Enum):
+    
     EQUAL = "="
     NEQ = "<>"
     LT = "<"
@@ -143,15 +153,12 @@ class WhereType(Enum):
 
 class Where:
 
-    def __init__(self, where_type: WhereType, left: Field, right):
+    def __init__(self, where_type: WhereType, left, right):
         self.where_type = where_type
         if not issubclass(left.__class__, Field):
             raise Exception("Left must be Field!")
         self.left = left
-        if type(right) == str:
-            self.right = right.encode("cp1251").decode("cp866")
-        else:
-            self.right = right
+        self.right = right
 
     @property
     def value(self):
@@ -173,6 +180,13 @@ class Where:
 
         return " %s %s ?" % (self.left.sql_name, self.where_type.value), self.right
 
+class WhereOR:
+    
+    def __init__(self, *conditions):
+        self.conditions = []
+        for condition in conditions:
+            self.conditions.append(Where(*condition))
+        
 
 class JoinType(Enum):
     LEFT_OUTER = "LEFT OUTER"
@@ -207,7 +221,7 @@ class Join:
 
 class Select:
 
-    def __init__(self, engine: Engine, table: Table, *cells):
+    def __init__(self, engine, table: Table, *cells):
         """
         Запрос
         :param engine: движок
@@ -247,12 +261,19 @@ class Select:
         self.__joins.append(Join(JoinType.INNER, field1, field2))
         return self
 
+    def left_outer(self, field_join, field_id):
+        self.__joins.append(Join(JoinType.LEFT_OUTER, field_join, field_id))
+        return self
+
     def right_outer(self, field1, field2):
         self.__joins.append(Join(JoinType.RIGHT_OUTER, field1, field2))
         return self
 
     def where(self, expression):
-        self.__conditions.append(Where(*expression))
+        if type(expression) == WhereOR:
+            self.__conditions.append(expression)
+        else:
+            self.__conditions.append(Where(*expression))
         return self
 
     def __extends_str(self, extends, table_name=None):
@@ -270,8 +291,10 @@ class Select:
             table = "%s as %s" % (join_field.parent.table, join_field.parent.name)
         return "(%s LEFT OUTER JOIN %s ON %s = %s) " % (first, table, extend.sql_name, join_field.sql_name)
 
-    def __join_str(self, extends, table_name=None):
+    def __join_str(self, extends, table_name=None, as_name=None):
         if len(extends) == 0:
+            if as_name:
+                return "%s AS %s" % (table_name, as_name)
             return table_name
         if len(extends) == 1:
             extend = extends[0]
@@ -284,16 +307,27 @@ class Select:
     def __query(self):
         result = "SELECT %s FROM " % (','.join(map(lambda x: x.sql_name, self.__select_fields)))
 
-        result = result + self.__join_str(self.__joins, self.__main_table.table)
+        result = result + self.__join_str(self.__joins, self.__main_table.table, self.__main_table.name)
         if len(self.__conditions) > 0:
             result = result + " WHERE "
         filter_fields = []
         filter_args = []
         for where in self.__conditions:
-            where_str, where_arg = where.sql
-            filter_fields.append(where_str)
-            if where_arg:
-                filter_args.append(where_arg)
+            if type(where) == WhereOR:
+                wheres = []
+                print(where.conditions)
+                for condition in where.conditions:
+                    print(condition)
+                    where_or_str, where_or_arg = condition.sql
+                    wheres.append(where_or_str)
+                    if where_or_arg:
+                        filter_args.append(where_or_arg)
+                filter_fields.append(" OR ".join(wheres))
+            else:
+                where_str, where_arg = where.sql
+                filter_fields.append(where_str)
+                if where_arg:
+                    filter_args.append(where_arg)
         result = result + " AND ".join(filter_fields)
         return result, filter_args
 
@@ -301,7 +335,7 @@ class Select:
         query, args = self.__query()
         records = []
         #print(query, args)
-        for line in self.__engine._run(query, args):
+        for line in self.__engine.run(query, args):
             record = {}
             for i, field in enumerate(self.__select_fields):
                 value = line[i]
@@ -314,22 +348,20 @@ class Select:
 
     def one(self):
         query, args = self.__query()
-        records = []
-        line = next(self.__engine._run(query, args))
+        line = next(self.__engine.run(query, args))
         record = {}
         for i, field in enumerate(self.__select_fields):
             value = line[i]
             if type(value) == str:
-                record[field.human_name] = line[i].encode("cp866").decode("cp1251")
+                record[field.human_name] = line[i]
             else:
                 record[field.human_name] = line[i]
-        records.append(record)
-        return record
+        return Record(record)
 
     def dict(self, field_id: Field):
         query, args = self.__query()
         records = {}
-        for line in self.__engine._run(query, args):
+        for line in self.__engine.run(query, args):
             record = {}
             record_id = None
             for i, field in enumerate(self.__select_fields):
@@ -345,7 +377,7 @@ class Select:
         return records
 
 
-class Engine:
+class ODBCEngine:
 
     def __init__(self, root):
         connect = "Driver={Microsoft dBASE Driver (*.dbf)};DefaultDir=" + root
@@ -354,13 +386,17 @@ class Engine:
     def select(self, table: Table, *cells):
         return Select(self, table, *cells)
 
-    def _run(self, query_str: str, *args):
+    def run(self, query_str: str, args):
         try:
             cursor = self.reader.cursor()
             print(query_str)
-
-
-            cursor.execute(query_str, *args)
+            ar =[]
+            for arg in args:
+                if type(arg) == date:
+                    ar.append(arg)
+                else:
+                    ar.append(arg.encode("cp1251").decode("cp866"))
+            cursor.execute(query_str, ar)
             for line in cursor.fetchall():
                 yield line
         except pyodbc.Error:
@@ -370,3 +406,45 @@ class Engine:
 
         finally:
             cursor.close()
+
+
+class ADOEngine:
+
+    def __init__(self, root):
+        self.conn = win32com.client.Dispatch('ADODB.Connection')
+        self.conn.Open('Provider=VFPOLEDB.1;Data Source=%s' % root)
+
+    def select(self, table: Table, *cells):
+        return Select(self, table, *cells)
+
+    def run(self, query_str: str, args):
+        print(args)
+        try:
+            cmd = win32com.client.Dispatch('ADODB.Command')
+            cmd.ActiveConnection = self.conn
+
+            index = 0
+            while "?" in query_str:
+                arg = args[index]
+                if type(arg) == date:
+                    query_str = query_str.replace("?", "{^%s}" % str(arg), 1)
+                else:
+                    query_str = query_str.replace("?", "'%s'" % arg, 1)
+                index = index + 1
+            print(query_str)
+            cmd.CommandText = query_str
+
+            rs, total = cmd.Execute()  # This returns a tuple: (<RecordSet>, number_of_records)
+            count = rs.Fields.Count
+            while not rs.EOF:
+                line = []
+                for x in range(count):
+                    line.append(rs.Fields(x).Value)
+                yield line
+                rs.MoveNext()
+                total = total - 1
+        except Exception as error:
+            print("Ошибка в запросе!")
+            print("Запрос:", query_str)
+            print("Аргументы:", args)
+            print(error)
