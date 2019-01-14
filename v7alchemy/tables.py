@@ -36,13 +36,22 @@ class TableJournal(Table):
     ismark = Field("ISMARK")
 
 
+class TableConstant(Table):
+
+    prefix = "1SCONST"
+    name = "Const"
+
+    obj = Field("OBJID")
+    field = Field("id")
+    date = Field("date")
+    value = Field("value")
+
 class TableSC(Table):
     prefix = "SC"
 
     id = Field("ID")
     code = Field("CODE")
     description = Field("DESCR")
-
 
 class TableDH(Table):
     prefix = "DH"

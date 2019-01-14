@@ -11,8 +11,10 @@ from enum import Enum
 class QueryException(Exception):
     pass
 
+
 def or_(*conditions):
     return WhereOR(*conditions)
+
 
 class Record:
 
@@ -21,6 +23,26 @@ class Record:
 
     def __getitem__(self, key):
         return self.values[key]
+
+    def strip(self, key):
+        return self.values[key].strip()
+
+    def float(self, key):
+        value = self.values[key]
+        if type(value) == str:
+            return float(value.replace(",","."))
+        return value
+
+
+class Function:
+
+    def __init__(self, mask: str, field: Field):
+        self.result = mask % (field.sql_name)
+
+    @property
+    def sql_name(self):
+        return self.result
+
 
 class Field:
     """
@@ -53,7 +75,6 @@ class Field:
         if self.__func:
            value = self.__func % value
         return value
-
 
     @property
     def human_name(self):
@@ -206,7 +227,6 @@ class Join:
         self.field = field
 
     def __str__(self):
-
         if self.join_field.parent.name:
             table = "%s AS %s" % (self.join_field.parent.table, self.join_field.parent.name)
             field = "%s.%s" % (self.join_field.parent.name, self.join_field.cell)
@@ -315,14 +335,13 @@ class Select:
         for where in self.__conditions:
             if type(where) == WhereOR:
                 wheres = []
-                print(where.conditions)
                 for condition in where.conditions:
-                    print(condition)
+
                     where_or_str, where_or_arg = condition.sql
                     wheres.append(where_or_str)
                     if where_or_arg:
                         filter_args.append(where_or_arg)
-                filter_fields.append(" OR ".join(wheres))
+                filter_fields.append("("+ " OR ".join(wheres) + ")")
             else:
                 where_str, where_arg = where.sql
                 filter_fields.append(where_str)
@@ -340,10 +359,10 @@ class Select:
             for i, field in enumerate(self.__select_fields):
                 value = line[i]
                 if type(value) == str:
-                    record[field.human_name] = line[i].encode("cp866").decode("cp1251")
+                    record[field.human_name] = line[i]
                 else:
                     record[field.human_name] = line[i]
-            records.append(record)
+            records.append(Record(record))
         return records
 
     def one(self):
@@ -367,13 +386,13 @@ class Select:
             for i, field in enumerate(self.__select_fields):
                 value = line[i]
                 if type(value) == str:
-                    record[field.human_name] = line[i].encode("cp866").decode("cp1251")
+                    record[field.human_name] = line[i]
                 else:
                     record[field.human_name] = line[i]
                 if field.name == field_id.name:
                     record_id = line[i]
 
-            records[record_id] = record
+            records[record_id] = Record(record)
         return records
 
 
@@ -389,7 +408,6 @@ class ODBCEngine:
     def run(self, query_str: str, args):
         try:
             cursor = self.reader.cursor()
-            print(query_str)
             ar =[]
             for arg in args:
                 if type(arg) == date:
@@ -412,13 +430,13 @@ class ADOEngine:
 
     def __init__(self, root):
         self.conn = win32com.client.Dispatch('ADODB.Connection')
+        print(root)
         self.conn.Open('Provider=VFPOLEDB.1;Data Source=%s' % root)
 
     def select(self, table: Table, *cells):
         return Select(self, table, *cells)
 
     def run(self, query_str: str, args):
-        print(args)
         try:
             cmd = win32com.client.Dispatch('ADODB.Command')
             cmd.ActiveConnection = self.conn
@@ -428,10 +446,11 @@ class ADOEngine:
                 arg = args[index]
                 if type(arg) == date:
                     query_str = query_str.replace("?", "{^%s}" % str(arg), 1)
+                elif type(arg) == int:
+                    query_str = query_str.replace("?", "%s" % arg, 1)
                 else:
                     query_str = query_str.replace("?", "'%s'" % arg, 1)
                 index = index + 1
-            print(query_str)
             cmd.CommandText = query_str
 
             rs, total = cmd.Execute()  # This returns a tuple: (<RecordSet>, number_of_records)
